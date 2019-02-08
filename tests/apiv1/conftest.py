@@ -26,16 +26,6 @@ def client(app):
 
 
 @pytest.fixture
-def create_team(app):
-    def _create_team(name):
-        with app.app_context():
-            return TeamController.create({
-                'name': name
-            })
-    return _create_team
-
-
-@pytest.fixture
 def create_user(app):
     def _create_user(name):
         with app.app_context():

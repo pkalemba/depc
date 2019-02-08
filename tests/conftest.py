@@ -6,10 +6,10 @@ import pytest
 from flask import Response
 from flask.testing import FlaskClient
 from werkzeug.datastructures import Headers
-from depc.controllers.rules import RuleController
-
 
 from depc import create_app
+from depc.controllers.rules import RuleController
+from depc.controllers.teams import TeamController
 from depc.extensions import db
 
 
@@ -97,6 +97,16 @@ def app(app_module):
             db.session.execute(table.delete())
         db.session.commit()
     return app_module
+
+
+@pytest.fixture
+def create_team(app):
+    def _create_team(name):
+        with app.app_context():
+            return TeamController.create({
+                'name': name
+            })
+    return _create_team
 
 
 @pytest.fixture

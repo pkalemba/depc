@@ -65,16 +65,19 @@ class ConfigController(Controller):
     @classmethod
     def _create_context_from_config(cls, config):
         """
-        Parse the whole configuration to create a dictionary representing each labels with the related parent.
+        Parses the whole configuration to create a dictionary representing each labels with
+        the related downstream compute task and keeps also a record of all labels with the
+        compute type (rule, operation, aggregation), the dependencies or the rule name (when applicable).
 
-        Below the example of the output:
+        Below, an example of the output:
+
         {'all_labels': {'Apache': {'compute_type': 'rule', 'rule_name': 'Servers'},
                 'Filer': {'compute_type': 'rule', 'rule_name': 'Servers'},
                 'Offer': {'compute_type': 'aggregation',
                           'dependencies': ['Website']},
                 'Website': {'compute_type': 'operation',
                             'dependencies': ['Filer', 'Apache']}},
-        'labels_with_parent': {'Apache': ('Website', 'operation'),
+        'labels_with_downstream': {'Apache': ('Website', 'operation'),
                         'Filer': ('Website', 'operation'),
                         'Website': ('Offer', 'aggregation')}}
 
@@ -83,7 +86,7 @@ class ConfigController(Controller):
         """
 
         config_context = {
-            'labels_with_parent': {},
+            'labels_with_downstream': {},
             'all_labels': {},
         }
         regex_patterns = {
@@ -93,8 +96,8 @@ class ConfigController(Controller):
             "aggregation": r"^aggregation.(AVERAGE|MIN|MAX)\(?\)?(\[[A-Z]+[a-zA-Z0-9]*(, [A-Z]+[a-zA-Z0-9]*)*?\])$"
         }
 
-        # Create the context with each bottom tasks, the top task associated
-        # The last top task (with no parent) will not be added to config_context['labels_with_parent']
+        # Create the context with each upstream tasks and the downstream task associated
+        # The last task (with no downstream) will not be added to config_context['labels_with_downstream']
         for label_name, data in config.items():
             for compute_type, regex in regex_patterns.items():
                 match = re.search(regex, data["qos"])
@@ -103,10 +106,10 @@ class ConfigController(Controller):
                         dependencies = match.group(2)[1:-1].split(', ')
                         for dep in dependencies:
                             if dep not in config_context:
-                                config_context['labels_with_parent'][dep] = {}
+                                config_context['labels_with_downstream'][dep] = {}
 
-                            # Save the parent for each dependencies
-                            config_context['labels_with_parent'][dep] = (label_name, compute_type)
+                            # Save the downstream label and compute type for each dependencies
+                            config_context['labels_with_downstream'][dep] = (label_name, compute_type)
 
                             config_context['all_labels'][label_name] = {
                                 'compute_type': compute_type,
@@ -130,26 +133,26 @@ class ConfigController(Controller):
 
     @classmethod
     def _check_config_from_context(cls, config_context, team_id):
-        # To avoid multiple useless calls to the database
+        # To avoid multiple identical calls to the database
         already_checked_rules = set()
 
         for label_name, meta in config_context['all_labels'].items():
             # This is not possible to schedule an operation or a rule after an aggregation
             # The only task authorized after an aggregation is also another aggregation
             try:
-                parent_label_name, parent_compute_type = config_context['labels_with_parent'][label_name]
+                dstream_label_name, dstream_compute_type = config_context['labels_with_downstream'][label_name]
                 if config_context['all_labels'][label_name]['compute_type'] == 'aggregation' \
-                        and parent_compute_type != 'aggregation':
+                        and dstream_compute_type != 'aggregation':
                     raise IntegrityError(
-                        'Label "{parent_label_name}" could not be executed after label "{label_name}"'
+                        'Label "{dstream_label_name}" could not be executed after label "{label_name}"'
                         .format(
-                            parent_label_name=parent_label_name,
+                            dstream_label_name=dstream_label_name,
                             label_name=label_name
                         )
                     )
             except KeyError:
-                # It happens when the current label has no parent
-                # (not present into config_context['labels_with_parent'])
+                # It happens when the current label has no downstream compute task
+                # (not present into config_context['labels_with_downstream'])
                 pass
 
             if meta['compute_type'] == 'rule' \
